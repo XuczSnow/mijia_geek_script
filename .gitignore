@@ -1,0 +1,12 @@
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 私人智能家居数据（不要上传）
+*.bak
+mijia_gw_out/
+mijia_bak_out/
+
+# 系统文件
+Thumbs.db
+desktop.ini
