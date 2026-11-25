@@ -9,15 +9,18 @@
 ## 文件结构
 
 ```
-mijia_geek/
-├── mijia_geek_client.py      # 在线客户端（约 1000 行，纯标准库）
+mijia_geek_script/
+├── mijia_geek_client.py      # 在线客户端（约 1100 行，纯标准库）
 ├── mijia_bak2json.py         # 离线 .bak 解析器（纯标准库）
+├── mijia_flow.py             # Mermaid 策略框图共用生成模块
+├── mijia_log_analyze.py      # 策略/节点执行频率分析 → 自包含 HTML（折线图 + 可点击框图 + 缩放）
 ├── README.md
 ├── mijia_gw_out/             # 在线抓取输出目录（相对脚本所在路径）
 │   ├── mijia_strategies.json   # 策略（cfg + 图节点）+ 设备/变量表 + names 映射
 │   ├── mijia_logs.txt          # 人类可读执行日志（单行简洁形式，设备/变量已翻译为实际名字）
 │   ├── mijia_logs_raw.json     # 原始日志行（JSON 数组，每行一个网关日志事件）
 │   ├── mijia_id_map.json       # ID→实际名字对照表（规则 / 设备 / 变量）
+│   ├── mijia_log_analysis.html # 执行频率分析报告（自包含，浏览器直接打开）
 │   └── mijia_flows/            # Mermaid 策略框图（每规则一个 .md + index.md）
 └── mijia_bak_out/            # 离线 .bak 解析输出目录（相对脚本所在路径）
     ├── <输入名>.json          # 解析后的 JSON（含 names 映射）
@@ -38,6 +41,29 @@ mijia_geek/
 
 生成的 `.md` 含 ` ```mermaid ` 代码块，可在支持 Mermaid 的 Markdown 渲染器
 （GitHub / Typora / Obsidian / VS Code Markdown 预览等）中查看流程图。
+
+### 执行频率分析（mijia_log_analyze.py）
+
+`mijia_log_analyze.py` 读取 `mijia_gw_out/` 下在线抓取的
+`mijia_strategies.json` + `mijia_logs_raw.json` + `mijia_id_map.json`，统计**每条策略**与
+**每个图节点**在日志区间内的执行次数，生成**自包含 HTML 报告**
+（`mijia_gw_out/mijia_log_analysis.html`，浏览器直接打开即可，框图走 mermaid CDN，
+其余折线图/表格/交互全部内联、无额外依赖）：
+
+```bash
+# 基于已抓取的在线数据生成执行频率报告
+python mijia_log_analyze.py            # 默认读 <脚本目录>/mijia_gw_out，输出 mijia_log_analysis.html
+python mijia_log_analyze.py --gw-out D:\gw --out D:\gw\report.html
+```
+
+报告内容：
+- **策略执行频率总表**：按触发次数排序 + 相对频率条，点击跳转对应策略卡片；
+- **每条策略卡片**：Mermaid 框图（节点按执行频次着色 灰0/蓝1-99/黄100-999/红≥1000），
+  点击图中节点或右侧节点表行 → 右下角弹出该节点执行次数、success 回执占比、下发值 Top、
+  按天折线 + 单日 24 小时折线（可点日期切换）；
+- **可缩放框图**：每个框图带 －/＋/重置 按钮与 `Ctrl+滚轮` 缩放，框图区可滚动，
+  布局与图表高度随 16:9 / 4K 视口自适应；
+- 「策略执行频率」按钮 → 展开该策略**按天折线** + **单日 24 小时折线**。
 
 ## 两个脚本如何解析"实际名字"
 
