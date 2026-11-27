@@ -945,9 +945,8 @@ def reparse_logs(out_dir: str):
           f"{os.path.join(out_dir, 'mijia_id_map.json')}")
 
 
-def fetch_all(mg: MijiaGateway, out_dir: str, max_log_blocks: int = 6):
-    os.makedirs(out_dir, exist_ok=True)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def _fetch_strategy_side(mg: MijiaGateway, out_dir: str, now: str) -> dict:
+    """策略侧：getGraphList/getGraph + 设备表 + 变量表 + names + 框图。"""
     print("[*] 拉取策略列表 (getGraphList) ...")
     rules = mg.call_api("getGraphList") or []
     print(f"[+] 共 {len(rules)} 条策略")
@@ -1021,8 +1020,12 @@ def fetch_all(mg: MijiaGateway, out_dir: str, max_log_blocks: int = 6):
     flow_paths = mijia_flow.write_flows(strategy_doc, out_dir,
                                          source_label="在线 API（设备=devList，变量=userData.name）")
     print(f"[+] 策略框图 {len(flow_paths)} 张 -> {os.path.join(out_dir, 'mijia_flows')}")
+    return strategy_doc
 
-    # ---- 执行日志 ----
+
+def _fetch_log_side(mg: MijiaGateway, out_dir: str, now: str, strategy_doc: dict,
+                    max_log_blocks: int = 6):
+    """日志侧：getLog 分页 + 渲染人类可读日志 + ID 映射落盘。"""
     print("[*] 拉取执行日志 (getLog, 分页) ...")
     blocks, seen_first = [], set()
     for num in range(max(1, max_log_blocks)):
@@ -1047,11 +1050,47 @@ def fetch_all(mg: MijiaGateway, out_dir: str, max_log_blocks: int = 6):
 
     rendered, bad, id_map = render_log_lines(raw_lines, strategy_doc)
     _write_log_files(out_dir, now, raw_lines, rendered, bad, id_map)
-
     print(f"[+] 日志共 {len(raw_lines)} 行（无法解析 {bad}），"
           f"设备映射 {len(id_map.get('设备', {}))} / 变量映射 {len(id_map.get('变量', {}))} 条，结果已写入 {out_dir}")
-    return strategy_doc, raw_lines
+    return raw_lines
 
+
+def fetch_all(mg: MijiaGateway, out_dir: str, max_log_blocks: int = 6, mode: str = "all"):
+    """mode: all=全量（默认）；strategies=仅策略（不抓日志）；logs=仅日志（不抓策略图/设备/变量表）。"""
+    os.makedirs(out_dir, exist_ok=True)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if mode == "logs":
+        # 仅日志：优先复用已有 strategies.json 做名字映射；否则只取规则列表拿规则名
+        strat_path = os.path.join(out_dir, "mijia_strategies.json")
+        if os.path.exists(strat_path):
+            with open(strat_path, encoding="utf-8-sig") as f:
+                strategy_doc = json.load(f)
+            print(f"[*] 复用已有 {os.path.basename(strat_path)} 作为日志名字映射")
+        else:
+            print("[*] 拉取策略列表 (仅 getGraphList，不取图/设备/变量表) ...")
+            rules = mg.call_api("getGraphList") or []
+            print(f"[+] 共 {len(rules)} 条策略（logs-only 模式，不写 strategies.json）")
+            strategy_doc = {
+                "fetched_at": now,
+                "rules": [{"cfg": c,
+                           "name": (c.get("userData") or {}).get("name"),
+                           "nodes": []} for c in rules],
+                "devices": {}, "variables": {},
+            }
+            strategy_doc["names"] = _build_names_map(
+                {}, strategy_doc,
+                "logs-only 模式：仅 getGraphList 规则名，无设备/变量名字")
+        _fetch_log_side(mg, out_dir, now, strategy_doc, max_log_blocks)
+        return strategy_doc, []
+
+    strategy_doc = _fetch_strategy_side(mg, out_dir, now)
+    if mode == "strategies":
+        print("[*] strategies-only 模式：跳过执行日志拉取")
+        return strategy_doc, []
+
+    raw_lines = _fetch_log_side(mg, out_dir, now, strategy_doc, max_log_blocks)
+    return strategy_doc, raw_lines
 
 # ===========================================================================
 # 6. 自检（AES 向量 / GCM 向量 / 通道往返 / ECJPAKE 双端模拟）
@@ -1135,6 +1174,10 @@ def main():
         os.path.dirname(os.path.abspath(__file__)), "mijia_gw_out"))
     ap.add_argument("--max-log-blocks", type=int, default=6,
                     help="getLog 最大翻页数（默认 6）")
+    ap.add_argument("--logs-only", action="store_true",
+                    help="仅拉执行日志（不抓策略图/设备/变量表；优先复用已有 mijia_strategies.json 翻译名字）")
+    ap.add_argument("--strategies-only", action="store_true",
+                    help="仅抓策略/设备/变量表 + 框图，不拉执行日志")
     ap.add_argument("--no-prompt", action="store_true",
                     help="非交互：失败后不提示输入，直接读 MIJIA_PASSCODE 或沿用旧登录码")
     ap.add_argument("--reparse", action="store_true",
@@ -1145,6 +1188,9 @@ def main():
                     help="不连网关：基于 out-dir 下已有 strategies.json 生成 Mermaid 策略框图")
     ap.add_argument("--selftest", action="store_true", help="仅运行内置密码学自检")
     args = ap.parse_args()
+
+    if args.logs_only and args.strategies_only:
+        ap.error("--logs-only 与 --strategies-only 不能同时使用")
 
     if args.selftest:
         selftest()
@@ -1173,7 +1219,8 @@ def main():
         mg = MijiaGateway(args.host, args.port, passcode)
         try:
             mg.connect()
-            fetch_all(mg, args.out_dir, args.max_log_blocks)
+            mode = "logs" if args.logs_only else ("strategies" if args.strategies_only else "all")
+            fetch_all(mg, args.out_dir, args.max_log_blocks, mode=mode)
             mg.ws.close()
             print("[*] 完成")
             return

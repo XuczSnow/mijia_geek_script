@@ -14,6 +14,7 @@ mijia_geek_script/
 ├── mijia_bak2json.py         # 离线 .bak 解析器（纯标准库）
 ├── mijia_flow.py             # Mermaid 策略框图共用生成模块
 ├── mijia_log_analyze.py      # 策略/节点执行频率分析 → 自包含 HTML（折线图 + 可点击框图 + 缩放）
+├── mijia_log_viewer.py       # 日志浏览器 → 自包含 HTML（时间/类型/策略/设备/变量/关键字筛选 + CSV 导出）
 ├── README.md
 ├── mijia_gw_out/             # 在线抓取输出目录（相对脚本所在路径）
 │   ├── mijia_strategies.json   # 策略（cfg + 图节点）+ 设备/变量表 + names 映射
@@ -21,6 +22,7 @@ mijia_geek_script/
 │   ├── mijia_logs_raw.json     # 原始日志行（JSON 数组，每行一个网关日志事件）
 │   ├── mijia_id_map.json       # ID→实际名字对照表（规则 / 设备 / 变量）
 │   ├── mijia_log_analysis.html # 执行频率分析报告（自包含，浏览器直接打开）
+│   ├── mijia_log_viewer.html   # 日志浏览器（自包含，按时间/策略/设备/变量/关键字筛选 + CSV 导出）
 │   └── mijia_flows/            # Mermaid 策略框图（每规则一个 .md + index.md）
 └── mijia_bak_out/            # 离线 .bak 解析输出目录（相对脚本所在路径）
     ├── <输入名>.json          # 解析后的 JSON（含 names 映射）
@@ -65,6 +67,26 @@ python mijia_log_analyze.py --gw-out D:\gw --out D:\gw\report.html
   布局与图表高度随 16:9 / 4K 视口自适应；
 - 「策略执行频率」按钮 → 展开该策略**按天折线** + **单日 24 小时折线**。
 
+### 日志浏览器（mijia_log_viewer.py）
+
+`mijia_log_viewer.py` 把 `mijia_gw_out/mijia_logs_raw.json` 导出为**自包含 HTML**
+（`mijia_gw_out/mijia_log_viewer.html`，零依赖、离线可打开，纯前端筛选/分页，数据不出本机）：
+
+```bash
+# 生成日志浏览器（默认读 <脚本目录>/mijia_gw_out）
+python mijia_log_viewer.py
+python mijia_log_viewer.py --gw-out D:\gw --out D:\gw\viewer.html
+```
+
+筛选维度：
+- **时间**：起止时间输入 + 「全部 / 最近24小时 / 最近7天 / 今天」快捷键；
+- **类型**：链路(l) / 节点(i) / 错误(e) / 规则事件(r) 复选；
+- **策略 / 设备 / 变量**：下拉筛选（设备/变量按实际中文名，来自 `mijia_strategies.json`
+  或回退到 `mijia_bak_out/` 里最新的 `.bak` 解析 JSON，口径与 `mijia_logs.txt` 一致）；
+- **关键字**：内容/策略名/设备名模糊搜索（150ms 防抖）。
+
+支持分页（每页 100~5000 行可调）、筛选结果**导出 CSV**（UTF-8 BOM，记事本/Excel 直接打开）。
+
 ## 两个脚本如何解析"实际名字"
 
 两个脚本都把 ID 解析为可读名字，但数据源不同：
@@ -101,6 +123,10 @@ python mijia_geek_client.py --passcode 916527
 
 # 3) 指定网关与输出目录
 python mijia_geek_client.py --host 192.168.31.1 --port 8086 --passcode 916527 --out-dir D:\gw
+
+# 4) 只要其一
+python mijia_geek_client.py --passcode 916527 --logs-only        # 仅拉执行日志（跳过策略图/设备/变量表）
+python mijia_geek_client.py --passcode 916527 --strategies-only  # 仅抓策略/设备/变量表 + 框图（不拉日志）
 ```
 
 登录码也可通过环境变量 `MIJIA_PASSCODE` 提供：`set MIJIA_PASSCODE=916527` 后省略 `--passcode`。
@@ -114,6 +140,8 @@ python mijia_geek_client.py --host 192.168.31.1 --port 8086 --passcode 916527 --
 | `--passcode` | 环境变量 `MIJIA_PASSCODE` | 网关登录码 |
 | `--out-dir` | `<脚本目录>\mijia_gw_out` | 输出目录 |
 | `--max-log-blocks N` | `6` | 执行日志最大翻页数（日志按块返回，越大拉得越多） |
+| `--logs-only` | 关 | 仅拉执行日志（不抓策略图/设备/变量表；优先复用已有 `mijia_strategies.json` 翻译名字，没有则只取规则名） |
+| `--strategies-only` | 关 | 仅抓策略/设备/变量表 + 生成 Mermaid 框图，不拉执行日志（两选项互斥） |
 | `--no-prompt` | 关 | 非交互模式：失败后不提示输入登录码，自动读 `MIJIA_PASSCODE` 或沿用原值 |
 | `--reparse` | — | 不连网关：用 `out-dir` 下已有 `mijia_logs_raw.json` + `mijia_strategies.json` 重新渲染 `mijia_logs.txt` |
 | `--flows` | — | 不连网关：基于 `out-dir` 下已有 `mijia_strategies.json` 生成 Mermaid 策略框图到 `mijia_flows/` |
